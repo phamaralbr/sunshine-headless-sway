@@ -4,7 +4,7 @@
 # Migrates Steam from the main desktop if it's running there
 
 APPID="$1"
-SWAYSOCK="/run/user/$(id -u)/sway-sunshine.sock"
+SWAYSOCK="${SWAYSOCK:-/run/user/$(id -u)/sway-sunshine.sock}"
 export SWAYSOCK
 
 if [ -z "$APPID" ]; then
@@ -33,7 +33,7 @@ rm -f /tmp/steam_singleton_* 2>/dev/null
 
 # Launch Steam in the headless Sway session
 if [ "$APPID" = "bigpicture" ]; then
-    swaymsg exec "steam steam://open/bigpicture"
+    swaymsg exec "steam -bigpicture"
 elif [ "$APPID" = "0" ]; then
     swaymsg exec steam
 else
