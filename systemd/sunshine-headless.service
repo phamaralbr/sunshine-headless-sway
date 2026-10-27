@@ -6,11 +6,13 @@ Requires=sway-sunshine.service
 [Service]
 Type=simple
 Environment=WAYLAND_DISPLAY=wayland-1
-Environment=SWAYSOCK=/run/user/1000/sway-sunshine.sock
+Environment=SWAYSOCK=/run/user/%U/sway-sunshine.sock
+Environment=PULSE_SINK=sink-sunshine-stereo
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 Environment=XDG_SESSION_TYPE=wayland
 Environment=XDG_CURRENT_DESKTOP=sway
 ExecStartPre=/bin/sleep 2
-ExecStart=/usr/bin/sg input -c /usr/bin/sunshine
+ExecStart=/usr/bin/sunshine %h/.config/sunshine/sunshine.conf
 Restart=on-failure
 RestartSec=5
 
