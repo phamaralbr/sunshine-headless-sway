@@ -1,10 +1,10 @@
 # Headless Sway + Sunshine Game Streaming
 
-> **About this fork**: Upstream ([`daaaaan/sunshine-headless-sway`](https://github.com/daaaaan/sunshine-headless-sway)) had a few quirks on modern setups like Arch + GNOME: Moonlight clicks moved the host cursor, Sunshine hijacked desktop audio, and games left stuck windows.
+> **About this fork**: Upstream ([`daaaaan/sunshine-headless-sway`](https://github.com/daaaaan/sunshine-headless-sway)) had a few quirks on my Arch + GNOME setup: Moonlight clicks moved the host cursor, Sunshine hijacked desktop audio.
 > 
 > This fork fixes those issues:
 > - **True input isolation**: Client clicks and touchscreen taps stay inside the stream—your host cursor won't budge.
-> - **Clean audio isolation**: Game sound goes to your stream, while your desktop audio stays on your speakers/DAC.
+> - **Clean audio isolation**: Game sound goes to your stream, while your desktop audio stays on your speakers.
 > - **Heroic & Steam support**: Adds Heroic Games Launcher (Epic, GOG) and cleans up games, Wine processes, and windows on exit.
 
 > **DISCLAIMER**: This is provided as-is with absolutely no warranty or guarantee. Use at your own risk.
