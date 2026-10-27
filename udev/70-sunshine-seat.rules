@@ -1,0 +1,10 @@
+# Assign Sunshine virtual input devices to seat1.
+# This isolates them from seat0 (the main desktop compositor: GNOME Mutter, KDE KWin).
+# Headless Sway runs with a libseat shim returning "seat1", allowing it to claim these devices.
+
+# Modern Sunshine virtual devices (libvirtualhid, vendor 1209)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="libvirtualhid*", ENV{ID_SEAT}="seat1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="1209", ENV{ID_SEAT}="seat1"
+
+# Legacy Sunshine passthrough devices (vendor 48879 / 0xBEEF, product 57005 / 0xDEAD)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{ID_SEAT}="seat1"

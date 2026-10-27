@@ -11,9 +11,17 @@ output * max_render_time off
 # Dark background
 exec swaybg -c '#1a1a2e'
 
-# Input isolation: disable all physical devices, enable only Sunshine virtual inputs
-# Sunshine passthrough devices use vendor 48879 (0xBEEF), product 57005 (0xDEAD)
+# Input isolation: disable all physical devices in the headless session
 input * events disabled
+
+# Enable modern Sunshine virtual input devices (libvirtualhid, vendor 1209 / Sway 4617)
+input "4617:3:libvirtualhid_Mouse" events enabled
+input "4617:3:libvirtualhid_Mouse_(Absolute)" events enabled
+input "4617:2:libvirtualhid_Keyboard" events enabled
+input "4617:4:libvirtualhid_Touchscreen" events enabled
+input "4617:6:libvirtualhid_Pen_Tablet" events enabled
+
+# Enable legacy Sunshine passthrough devices (vendor 48879 / 0xBEEF, product 57005 / 0xDEAD)
 input "48879:57005:Keyboard_passthrough" events enabled
 input "48879:57005:Mouse_passthrough" events enabled
 input "48879:57005:Mouse_passthrough_(absolute)" events enabled
@@ -21,7 +29,9 @@ input "48879:57005:Touch_passthrough" events enabled
 input "48879:57005:Pen_passthrough" events enabled
 input "1356:3302:Sunshine_PS5_(virtual)_pad_Touchpad" events enabled
 
-# Flat acceleration for mouse passthrough
+# Flat mouse acceleration
+input "4617:3:libvirtualhid_Mouse" accel_profile flat
+input "4617:3:libvirtualhid_Mouse_(Absolute)" accel_profile flat
 input "48879:57005:Mouse_passthrough" accel_profile flat
 input "48879:57005:Mouse_passthrough_(absolute)" accel_profile flat
 
