@@ -1,6 +1,6 @@
 # Headless Sway + Sunshine Game Streaming
 
-> **DISCLAIMER**: This is provided as-is with absolutely no warranty or guarantee. Use at your own risk. This may break your system, eat your configs, set your GPU on fire, or summon an elder god. The author(s) take no responsibility for anything that happens as a result of using this software. You have been warned.
+> **DISCLAIMER**: This is provided as-is with absolutely no warranty or guarantee. Use at your own risk.
 
 ![Architecture Diagram](diagram.svg)
 
@@ -10,18 +10,19 @@ This setup runs a separate headless Wayland compositor (Sway) dedicated to game 
 
 ## Why headless?
 
-- Stream games without taking over your main display
+- Stream games without taking over your main display or moving your mouse cursor
+- True multi-seat input isolation: host input stays on host, Moonlight input stays in stream
 - Dynamic resolution matching — the headless output adapts to your Moonlight client
-- Game audio routes only to the stream, host audio is unaffected
-- Works with NVIDIA GPUs using NVENC hardware encoding
+- Game audio routes only to the stream; host audio (speakers/DAC) is unaffected
+- Supports Steam (Big Picture, individual games) and Heroic Games Launcher (Epic, GOG, Amazon)
 - Minimal overhead when idle (~420MB RAM, negligible CPU)
 
 ## Requirements
 
-- **OS**: Linux with systemd user services (tested on CachyOS/Arch and Ubuntu 25.10)
-- **GPU**: NVIDIA with proprietary drivers (for NVENC)
-- **Packages**: `sway`, `swaybg`, `pipewire`, `wireplumber`, `xdg-desktop-portal-wlr`
-- **Sunshine**: [LizardByte Sunshine](https://github.com/LizardByte/Sunshine/releases) v2026.226+ (deb for Ubuntu, `sunshine` AUR package for Arch)
+- **OS**: Linux with systemd user services (Arch Linux / CachyOS, Ubuntu/Debian, Fedora)
+- **Packages**: `sway`, `swaybg`, `pipewire`, `wireplumber`, `xdg-desktop-portal-wlr`, `gcc`
+- **User Groups**: User must be a member of the `input` group
+- **Sunshine**: [LizardByte Sunshine](https://github.com/LizardByte/Sunshine/releases)
 - **Client**: [Moonlight](https://moonlight-stream.org/) on any device
 
 ## Quick install
@@ -33,252 +34,211 @@ cd sunshine-headless-sway
 ```
 
 The install script will:
-- Install missing dependencies (`sway`, `swaybg`, `xdg-desktop-portal-wlr`) via pacman or apt
-- Auto-detect your desktop environment (GNOME or KDE) for input isolation
-- Auto-detect your Sunshine installation path
-- Detect the correct Wayland display number and user ID
-- Template all config files with your system's paths
-- Install and enable the systemd services
-- Preserve any existing Sunshine config you already have
-
-## Manual setup
-
-If you prefer to install manually, see the [manual setup guide](#manual-setup-guide) below.
+- Install missing dependencies (`sway`, `swaybg`, `xdg-desktop-portal-wlr`, `gcc`)
+- Ensure user membership in the `input` group
+- Compile the `libseat-seat1.so` shim into `~/.local/lib/`
+- Create a capability-free Sway copy at `~/.local/bin/sway-seat1`
+- Install the `70-sunshine-seat.rules` udev rule for true seat1 input isolation
+- Install and configure Sway and Sunshine launch/stop scripts (Steam & Heroic)
+- Install and enable systemd user services (`sway-sunshine.service`, `sunshine-headless.service`)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Main Desktop (GNOME/KDE)          wayland-0        │
-│  └─ Normal apps, browser, etc.                      │
-│  └─ Audio → your speakers/headphones                │
-├─────────────────────────────────────────────────────┤
-│  Headless Sway                     wayland-1        │
-│  └─ Games launched via Sunshine                     │
-│  └─ Audio → sink-sunshine-stereo → Moonlight stream │
-│  └─ Video → wlr-screencopy → NVENC → Moonlight     │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Main Desktop (GNOME / KDE)              seat0       wayland-0  │
+│  ├─ Normal apps, browser, work                                  │
+│  ├─ Host physical input devices (keyboard, mouse)               │
+│  └─ Audio → host speakers / USB DAC                             │
+├─────────────────────────────────────────────────────────────────┤
+│  Headless Sway                           seat1       wayland-1  │
+│  ├─ Steam & Heroic games launched via Sunshine                  │
+│  ├─ Moonlight virtual inputs (libvirtualhid / seat1)            │
+│  ├─ Audio → sink-sunshine-stereo → Moonlight stream             │
+│  └─ Video → wlr-screencopy → Hardware Encoder → Moonlight       │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-Two systemd user services manage the stack:
+Two systemd user services manage the headless stack:
 
-1. **`sway-sunshine.service`** — runs a headless Sway compositor with no physical display
-2. **`sunshine-headless.service`** — runs Sunshine pointed at the headless Sway session
+1. **`sway-sunshine.service`** — runs a headless Sway compositor configured for `seat1`
+2. **`sunshine-headless.service`** — runs Sunshine connected to the headless Sway display
 
-## Adding games
+---
 
-Edit `~/.config/sunshine/apps.json` to add Steam games. Find the app ID on [SteamDB](https://steamdb.info/) and add an entry:
+## How it works
+
+### 1. Input isolation (`seat1` + libseat shim)
+
+Older approaches tried setting `mutter-device-ignore` or stripping `ID_INPUT` tags on `seat0`. These fail on modern desktop environments: both `gnome-shell` (Mutter) and `sway` hold virtual input devices open directly on `seat0`. Furthermore, modern Sunshine creates devices named `libvirtualhid ...` with vendor `1209` (reported as `4617` by Sway) instead of legacy `beef:dead`.
+
+The solution is true multi-seat isolation:
+
+1. **Udev Rule (`udev/70-sunshine-seat.rules`)**:
+   Matches Sunshine virtual devices (`libvirtualhid*`, vendor `1209`, and legacy `beef:dead`) and assigns them to `ID_SEAT="seat1"`:
+   ```udev
+   SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="libvirtualhid*", ENV{ID_SEAT}="seat1"
+   SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="1209", ENV{ID_SEAT}="seat1"
+   SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{ID_SEAT}="seat1"
+   ```
+   Because Mutter/KWin listen only on `seat0`, they completely ignore these virtual devices.
+
+2. **Libseat Shim (`libseat-shim/seat1.c`)**:
+   wlroots uses `libseat` to discover its seat. With the `noop` backend (`LIBSEAT_BACKEND=noop`), `libseat_seat_name()` always returns `"seat0"`. Moving devices to `seat1` would therefore hide them from Sway as well.
+   We inject a tiny preload shim (`libseat-seat1.so`) that overrides `libseat_seat_name` to return `"seat1"`, allowing headless Sway to bind to `seat1`.
+
+3. **Capability-Free Sway Binary (`sway-seat1`)**:
+   On distributions like Arch Linux, `/usr/bin/sway` carries a file capability (`cap_sys_nice=ep`). Linux's dynamic linker (`ld.so`) automatically strips `LD_PRELOAD` from any binary with file capabilities or setuid bits (such as `sg`).
+   `sway-sunshine.service` copies `/usr/bin/sway` to `~/.local/bin/sway-seat1` via `ExecStartPre`, stripping capabilities so `LD_PRELOAD=~/.local/lib/libseat-seat1.so` is loaded.
+
+4. **Sway Input Configuration (`sway-sunshine/config`)**:
+   Headless Sway disables all physical inputs (`input * events disabled`) and only enables virtual Sunshine devices:
+   ```
+   input * events disabled
+   input "4617:3:libvirtualhid_Mouse" events enabled
+   input "4617:3:libvirtualhid_Mouse_(Absolute)" events enabled
+   input "4617:2:libvirtualhid_Keyboard" events enabled
+   input "4617:4:libvirtualhid_Touchscreen" events enabled
+   input "4617:6:libvirtualhid_Pen_Tablet" events enabled
+   input "4617:3:libvirtualhid_Mouse" accel_profile flat
+   input "4617:3:libvirtualhid_Mouse_(Absolute)" accel_profile flat
+   ```
+
+---
+
+### 2. Audio isolation (Capture pinning & default sink protection)
+
+To ensure desktop audio (e.g. YouTube, Spotify) stays on your host DAC/speakers while game audio goes only into the stream:
+
+1. **Virtual Audio Sink**:
+   Sway services and games run with `PULSE_SINK=sink-sunshine-stereo`.
+   Sunshine is configured with `audio_sink = sink-sunshine-stereo` and `capture = wlr`.
+
+2. **Default Sink Restoration (`restore-default-sink.sh`)**:
+   When Moonlight connects, Sunshine temporarily sets `sink-sunshine-stereo` as the system default sink.
+   `restore-default-sink.sh` runs as a prep command: it records the host's actual default sink (e.g., USB DAC) and spawns a background watcher (`sunshine-sink-restore`) via `systemd-run --user` that restores `wpctl set-default` once Sunshine switches it.
+
+3. **Capture Stream Pinning (`fix-capture.sh`)**:
+   Once the host default sink is switched back to the DAC, an unpinned Sunshine audio capture stream would follow the default and capture the host DAC monitor — leaking desktop audio into the stream.
+   `fix-capture.sh` (spawned by `restore-default-sink.sh` as `sunshine-capture-fix`) locates Sunshine's `source-output` and explicitly pins it to `sink-sunshine-stereo.monitor`.
+
+4. **Optional Sink Enforcer (`keep-default-sink.sh`)**:
+   A standalone utility that listens to PulseAudio server events and enforces the host's physical default sink.
+
+> [!NOTE]
+> Modern Sunshine releases create virtual sinks dynamically. If both PipeWire's `sunshine-null-sink.conf` drop-in and Sunshine create sinks with identical names (`sink-sunshine-stereo`), sink lookups can become ambiguous. If you see duplicate sinks in `pactl list short sinks`, remove `~/.config/pipewire/pipewire.conf.d/sunshine-null-sink.conf`.
+
+---
+
+### 3. Application launchers (Steam & Heroic)
+
+Scripts located in `~/.config/sway-sunshine/` handle application lifecycle:
+
+#### Heroic Games Launcher
+- **`start-heroic.sh`**: Sets `SWAYSOCK` and `PULSE_SINK`, kills any lingering instances, and launches `heroic --fullscreen` inside Sway.
+- **`stop-heroic.sh`**: Cleanly sends `SIGTERM` to `heroic` and `wineserver`, waits up to 5 seconds, and closes any remaining Sway windows.
+
+#### Steam
+- **`start-steam-game.sh`**: Shuts down any existing Steam desktop instance, cleans IPC locks (`~/.steam/steam.pid`), and launches Steam in Sway using `steam -bigpicture` or `steam -applaunch <APP_ID>`.
+- **`stop-steam-game.sh`**: Initiates `steam -shutdown` (allowing Steam Cloud sync), terminates lingering Wine/game processes, and closes dangling Sway windows.
+
+#### Configuration in `apps.json`
+Entries in `~/.config/sunshine/apps.json`:
 
 ```json
 {
-  "name": "Game Name",
+  "name": "Heroic Games Launcher",
   "detached": [
-    "swaymsg exec 'steam steam://rungameid/APP_ID'"
+    "/home/YOUR_USER/.config/sway-sunshine/start-heroic.sh"
   ],
+  "image-path": "heroic.png",
   "prep-cmd": [
     {
-      "do": "~/.config/sway-sunshine/set-resolution.sh",
+      "do": "/home/YOUR_USER/.config/sway-sunshine/restore-default-sink.sh",
       "undo": ""
+    },
+    {
+      "do": "/home/YOUR_USER/.config/sway-sunshine/set-resolution.sh",
+      "undo": "/home/YOUR_USER/.config/sway-sunshine/stop-heroic.sh"
     }
   ]
 }
 ```
 
-Restart Sunshine after editing: `systemctl --user restart sunshine-headless.service`
+---
 
-## How it works
+## Verification & Troubleshooting
 
-### NVIDIA + headless Sway renderer
+### Input isolation verification
+1. Check that Sunshine devices are assigned to `seat1`:
+   ```bash
+   udevadm info /dev/input/eventX | grep ID_SEAT
+   # Should output: ID_SEAT=seat1
+   ```
+2. Verify only Sway holds the virtual input devices:
+   ```bash
+   sudo fuser -v /dev/input/eventX
+   # Should list 'sway-seat1' (or 'sway'), and NOT 'gnome-shell' or 'kwin'
+   ```
+3. Verify the shim is loaded into the Sway process:
+   ```bash
+   grep seat1 /proc/$(systemctl --user show sway-sunshine -p MainPID --value)/maps
+   # Should display: ... ~/.local/lib/libseat-seat1.so
+   ```
+4. Verify Sway input devices:
+   ```bash
+   SWAYSOCK=/run/user/$(id -u)/sway-sunshine.sock swaymsg -t get_inputs | grep identifier
+   ```
 
-The Sway service uses `WLR_RENDERER=gles2` by default. Older wlroots versions have DRM format modifier incompatibilities with NVIDIA's headless backend when using the Vulkan renderer. This may be resolved in wlroots 0.18+, but gles2 remains the safe default.
+### Audio isolation verification
+With Moonlight connected and playing sound in both host and stream:
+1. Verify host default sink remains on your DAC:
+   ```bash
+   pactl get-default-sink
+   ```
+2. Verify host apps output to your DAC while games output to `sink-sunshine-stereo`:
+   ```bash
+   pactl list short sink-inputs
+   ```
+3. Verify Sunshine's capture stream is pinned to `sink-sunshine-stereo.monitor`:
+   ```bash
+   pactl list short source-outputs
+   ```
 
-### Audio isolation
+---
 
-Game audio is routed exclusively to the Moonlight stream without touching your host audio:
-
-- A persistent PipeWire null sink (`sink-sunshine-stereo`) is created via config drop-in — it always exists, even when Moonlight is disconnected or backgrounded
-- `PULSE_SINK=sink-sunshine-stereo` is set in the Sway service environment, so apps launched in the headless session output to this sink
-- `audio_sink = sink-sunshine-stereo` in `sunshine.conf` tells Sunshine to capture from that sink
-- `restore-default-sink.sh` runs as a prep command to prevent Sunshine from hijacking your host's default audio sink — it detects the change and restores it within seconds
-- When Moonlight is backgrounded, game audio stays in the persistent null sink (silent) instead of reverting to your host speakers
-- Your main desktop audio continues through your normal output device
-
-### Dynamic resolution
-
-When a Moonlight client connects, Sunshine runs `set-resolution.sh` as a prep command. This uses `SUNSHINE_CLIENT_WIDTH`, `SUNSHINE_CLIENT_HEIGHT`, and `SUNSHINE_CLIENT_FPS` environment variables to resize the headless output to match the client exactly. On disconnect, `reset-resolution.sh` reverts to 1080p.
-
-### Wayland display numbering
-
-The headless Sway session typically gets `wayland-1` (assuming your main desktop is `wayland-0`). The install script detects this automatically. To check manually:
-
-```bash
-ls /run/user/$(id -u)/wayland-*
-```
-
-### IPC socket
-
-Sway creates its IPC socket at the path specified by `SWAYSOCK` (`/run/user/<uid>/sway-sunshine.sock`). The service cleans up stale sockets on restart via `ExecStartPre`. All `swaymsg` commands in the apps and scripts reference this socket explicitly.
-
-## Troubleshooting
-
-### Blank display / error code -1
-
-- Check `~/.config/sunshine/sunshine.log` for `Frame capture failed`
-- Ensure `WLR_RENDERER=gles2` is set in `sway-sunshine.service` (not `vulkan`)
-- Verify Sunshine is connecting to the correct Wayland display
-
-### Input isolation
-
-Input is fully isolated between your desktop and the streaming session. Sunshine creates virtual input devices (vendor `0xBEEF`, product `0xDEAD`) that must be hidden from your host desktop while remaining accessible to the headless Sway session.
-
-The install script **auto-detects your desktop environment** and installs the appropriate udev rule. Both approaches install to `/etc/udev/rules.d/85-sunshine-input-isolation.rules`.
-
-#### GNOME (Mutter)
-
-Uses the `mutter-device-ignore` property — a targeted GNOME-specific mechanism that tells Mutter to skip specific devices while leaving them visible to other consumers:
-
-```udev
-ACTION=="add|change", SUBSYSTEM=="input", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{mutter-device-ignore}="1"
-```
-
-#### KDE (KWin)
-
-KWin has no equivalent to `mutter-device-ignore`. Instead, the udev rule strips `ID_INPUT` tags so KWin never discovers the devices as inputs:
-
-```udev
-ACTION=="add|change", SUBSYSTEM=="input", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{ID_INPUT}="", ENV{ID_INPUT_KEYBOARD}="", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}=""
-```
-
-> **Note**: The KDE method also works for GNOME and other compositors, but is more aggressive — it hides the devices from *all* desktop tools (e.g., Settings panels). The `mutter-device-ignore` method is preferred for GNOME since it's more targeted.
-
-#### How isolation works
-
-- The **udev rule** prevents the host compositor from claiming Sunshine's virtual inputs (method varies by DE, see above)
-- The headless Sway uses `WLR_BACKENDS=headless,libinput` with `LIBSEAT_BACKEND=noop` and runs under the `input` group via `sg` to access input devices without a logind seat
-- The **Sway config** disables all physical host devices and only enables Sunshine's passthrough devices, so your physical keyboard and mouse don't leak into the streaming session
-- Gamepads are read directly by Steam via evdev, bypassing the compositor entirely
-
-#### Switching DE method manually
-
-If you switch desktop environments, reinstall the appropriate rule:
-
-```bash
-# For GNOME
-sudo cp udev/85-sunshine-input-isolation-gnome.rules /etc/udev/rules.d/85-sunshine-input-isolation.rules
-
-# For KDE
-sudo cp udev/85-sunshine-input-isolation-kde.rules /etc/udev/rules.d/85-sunshine-input-isolation.rules
-
-# Reload
-sudo udevadm control --reload-rules
-sudo udevadm trigger --subsystem-match=input
-```
-
-### No input / can't control games
-
-- The `xdg-desktop-portal-wlr` package must be installed
-- Check that `/dev/uinput` is accessible to your user (Sunshine's udev rules should handle this)
-- Verify the libinput backend is active: `SWAYSOCK=/run/user/$(id -u)/sway-sunshine.sock swaymsg -t get_inputs` should show Sunshine passthrough devices with `events: enabled`
-
-### Games don't launch
-
-- Verify the Sway IPC socket exists: `ls -la /run/user/$(id -u)/sway-sunshine.sock`
-- Test manually: `SWAYSOCK=/run/user/$(id -u)/sway-sunshine.sock swaymsg -t get_tree`
-- If the socket is stale after a restart, the `ExecStartPre` cleanup in the service handles it
-
-### Audio bleeds to host
-
-- Verify `audio_sink = sink-sunshine-stereo` is in `~/.config/sunshine/sunshine.conf`
-- Check `PULSE_SINK=sink-sunshine-stereo` is in `sway-sunshine.service`
-- Verify the `restore-default-sink.sh` prep command is in `apps.json` — without it, Sunshine sets `sink-sunshine-stereo` as the system-wide default, routing all host audio into the stream
-- Confirm your default sink after connecting: `wpctl status | grep '\*'`
-
-### UPnP port mapping failures
-
-These errors (`Failed to map UDP/TCP`) are harmless if you're connecting over LAN or a VPN like Tailscale. They only matter for WAN connections through your router.
-
-## Manual setup guide
-
-If you'd rather not use the install script:
-
-### 1. Install dependencies
-
-**Arch / CachyOS:**
-```bash
-sudo pacman -S sway swaybg xdg-desktop-portal-wlr
-```
-
-**Ubuntu / Debian:**
-```bash
-sudo apt install sway swaybg xdg-desktop-portal-wlr
-```
-
-### 2. Copy config files
-
-```bash
-# Sway config and scripts
-mkdir -p ~/.config/sway-sunshine
-cp sway-sunshine/config ~/.config/sway-sunshine/
-cp sway-sunshine/set-resolution.sh ~/.config/sway-sunshine/
-cp sway-sunshine/reset-resolution.sh ~/.config/sway-sunshine/
-chmod +x ~/.config/sway-sunshine/*.sh
-
-# Sunshine config
-cp sunshine/sunshine.conf ~/.config/sunshine/sunshine.conf
-cp sunshine/apps.json ~/.config/sunshine/apps.json
-
-# PipeWire persistent audio sink
-mkdir -p ~/.config/pipewire/pipewire.conf.d
-cp pipewire/sunshine-null-sink.conf ~/.config/pipewire/pipewire.conf.d/
-systemctl --user restart pipewire.service
-
-# Systemd services
-mkdir -p ~/.config/systemd/user
-cp systemd/sway-sunshine.service ~/.config/systemd/user/
-cp systemd/sunshine-headless.service ~/.config/systemd/user/
-```
-
-### 3. Edit paths
-
-Update the following in the copied files to match your system:
-
-- `sunshine-headless.service`: set `ExecStart` to your Sunshine path, `WAYLAND_DISPLAY` to your headless display
-- `sway-sunshine.service`: update `/run/user/1000/` to `/run/user/$(id -u)/` if your UID isn't 1000
-- `apps.json`: update `/home/YOUR_USER/` to your home directory
-- `set-resolution.sh` / `reset-resolution.sh`: update the socket path if your UID isn't 1000
-
-### 4. Enable and start
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now sway-sunshine.service
-systemctl --user enable --now sunshine-headless.service
-```
-
-### 5. Pair with Moonlight
-
-Open Moonlight, find your host, and pair using the PIN at `https://YOUR_HOST:47990`.
-
-## File structure
+## File Structure
 
 ```
-/etc/udev/rules.d/
-└── 85-sunshine-input-isolation.rules  # Installed by install.sh (GNOME or KDE variant)
+udev/
+└── 70-sunshine-seat.rules       # Assigns Sunshine virtual inputs to seat1
 
-~/.config/
-├── pipewire/pipewire.conf.d/
-│   └── sunshine-null-sink.conf # Persistent audio sink (survives disconnect)
-├── sway-sunshine/
-│   ├── config                  # Headless Sway compositor config (input isolation)
-│   ├── set-resolution.sh       # Dynamic resolution on connect
-│   ├── reset-resolution.sh     # Reset resolution on disconnect
-│   └── restore-default-sink.sh # Prevents Sunshine from hijacking host audio
-├── sunshine/
-│   ├── sunshine.conf           # Sunshine server config
-│   └── apps.json               # Game/app entries for Moonlight
-└── systemd/user/
-    ├── sway-sunshine.service   # Headless Sway compositor service
-    └── sunshine-headless.service # Sunshine streaming service
+libseat-shim/
+├── seat1.c                      # Overrides libseat_seat_name to "seat1"
+└── Makefile                     # Builds libseat-seat1.so
+
+pipewire/
+└── sunshine-null-sink.conf      # Optional persistent null sink
+
+sway-sunshine/
+├── config                       # Headless Sway compositor configuration
+├── set-resolution.sh            # Dynamic resolution matching on connect
+├── reset-resolution.sh          # Reverts resolution on disconnect
+├── restore-default-sink.sh      # Restores host default sink
+├── fix-capture.sh               # Pins Sunshine audio capture to stream sink
+├── keep-default-sink.sh         # Persistent host sink enforcer
+├── start-heroic.sh              # Heroic Games Launcher startup
+├── stop-heroic.sh               # Heroic / Wine cleanup
+├── start-steam-game.sh          # Steam startup (Big Picture or app ID)
+└── stop-steam-game.sh           # Steam / Wine cleanup
+
+sunshine/
+├── sunshine.conf                # Sunshine server configuration
+└── apps.json                    # Moonlight application definitions
+
+systemd/
+├── sway-sunshine.service        # Headless Sway systemd service (seat1)
+└── sunshine-headless.service    # Headless Sunshine systemd service
 ```
 
 ## License
