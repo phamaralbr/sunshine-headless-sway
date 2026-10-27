@@ -1,9 +1,11 @@
 # Headless Sway + Sunshine Game Streaming
 
-> **About this fork**: This fork extends upstream [`daaaaan/sunshine-headless-sway`](https://github.com/daaaaan/sunshine-headless-sway) with essential fixes for modern Linux systems (tested on Arch Linux + GNOME Wayland):
-> - **True Input Isolation (`seat1` + libseat shim)**: Upstream's `mutter-device-ignore` rule does not isolate devices in GNOME, causing client input to move the host desktop cursor. This fork moves Sunshine's virtual devices (`libvirtualhid`) onto a dedicated udev `seat1` and loads an `LD_PRELOAD` libseat shim into a capability-free Sway binary so only the headless stream receives client input.
-> - **Audio Isolation & Capture Pinning**: Sunshine hijacks the system default sink on client connect. This fork automatically restores your host DAC/speaker default sink while pinning Sunshine's capture stream to `sink-sunshine-stereo.monitor` so host audio never bleeds into the stream.
-> - **Heroic Games Launcher Support**: Dedicated startup and shutdown scripts for Heroic Games Launcher (Epic, GOG, Amazon), alongside improved Steam session management, `wineserver` cleanup, and Sway window teardown.
+> **About this fork**: Upstream ([`daaaaan/sunshine-headless-sway`](https://github.com/daaaaan/sunshine-headless-sway)) had a few quirks on modern setups like Arch + GNOME: Moonlight clicks moved the host cursor, Sunshine hijacked desktop audio, and games left stuck windows.
+> 
+> This fork fixes those issues:
+> - **True input isolation**: Client clicks and touchscreen taps stay inside the stream—your host cursor won't budge.
+> - **Clean audio isolation**: Game sound goes to your stream, while your desktop audio stays on your speakers/DAC.
+> - **Heroic & Steam support**: Adds Heroic Games Launcher (Epic, GOG) and cleans up games, Wine processes, and windows on exit.
 
 > **DISCLAIMER**: This is provided as-is with absolutely no warranty or guarantee. Use at your own risk.
 

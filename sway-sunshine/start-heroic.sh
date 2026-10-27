@@ -13,3 +13,4 @@ pkill -f "heroic/resources" 2>/dev/null
 
 # Launch Heroic inside the Sway compositor
 swaymsg exec "PULSE_SINK=sink-sunshine-stereo heroic --fullscreen"
+

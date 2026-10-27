@@ -19,3 +19,4 @@ if [ -S "$SWAYSOCK" ]; then
     swaymsg '[app_id=".*"] kill' 2>/dev/null || true
     swaymsg '[class=".*"] kill' 2>/dev/null || true
 fi
+

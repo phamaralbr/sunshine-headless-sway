@@ -37,3 +37,4 @@ fix_sink
 pactl subscribe 2>/dev/null | grep --line-buffered "on server" | while read -r _; do
     fix_sink
 done
+

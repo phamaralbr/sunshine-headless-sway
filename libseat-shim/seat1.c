@@ -14,3 +14,4 @@ const char *libseat_seat_name(void *seat) {
     (void)seat;
     return "seat1";
 }
+

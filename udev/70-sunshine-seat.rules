@@ -8,3 +8,4 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="1209", ENV{ID_SEAT}="se
 
 # Legacy Sunshine passthrough devices (vendor 48879 / 0xBEEF, product 57005 / 0xDEAD)
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="beef", ATTRS{id/product}=="dead", ENV{ID_SEAT}="seat1"
+
